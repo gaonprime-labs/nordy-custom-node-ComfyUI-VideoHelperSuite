@@ -18,6 +18,10 @@ from .load_images_nodes import LoadImagesFromDirectoryUpload, LoadImagesFromDire
 from .batched_nodes import VAEEncodeBatched, VAEDecodeBatched
 from .utils import ffmpeg_path, get_audio, hash_path, validate_path, requeue_workflow, gifski_path
 
+# S3 업로드를 위한 import 추가
+import time
+from util.image_utils import create_output_asset_by_job_id, upload_video, upload_image
+
 folder_paths.folder_names_and_paths["VHS_video_formats"] = (
     [
         os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "video_formats"),
@@ -180,7 +184,8 @@ class VideoCombine:
             "hidden": {
                 "prompt": "PROMPT",
                 "extra_pnginfo": "EXTRA_PNGINFO",
-                "unique_id": "UNIQUE_ID"
+                "unique_id": "UNIQUE_ID",
+                "job_id": "JOB_ID",
             },
         }
 
@@ -204,7 +209,8 @@ class VideoCombine:
         audio=None,
         unique_id=None,
         manual_format_widgets=None,
-        meta_batch=None
+        meta_batch=None,
+        job_id=None,
     ):
         # get output information
         output_dir = (
@@ -233,36 +239,50 @@ class VideoCombine:
         metadata.add_text("CreationTime", datetime.datetime.now().isoformat(" ")[:19])
 
         if meta_batch is not None and unique_id in meta_batch.outputs:
-            (counter, output_process) = meta_batch.outputs[unique_id]
+            (timestamp, output_process) = meta_batch.outputs[unique_id]
         else:
-            # comfy counter workaround
-            max_counter = 0
-
-            # Loop through the existing files
-            matcher = re.compile(f"{re.escape(filename)}_(\d+)\D*\..+", re.IGNORECASE)
-            for existing_file in os.listdir(full_output_folder):
-                # Check if the file matches the expected format
-                match = matcher.fullmatch(existing_file)
-                if match:
-                    # Extract the numeric portion of the filename
-                    file_counter = int(match.group(1))
-                    # Update the maximum counter value if necessary
-                    if file_counter > max_counter:
-                        max_counter = file_counter
-
-            # Increment the counter by 1 to get the next available value
-            counter = max_counter + 1
+            # unix timestamp 사용
+            timestamp = int(time.time())
             output_process = None
 
         # save first frame as png to keep metadata
-        file = f"{filename}_{counter:05}.png"
+        file = f"{filename}_{timestamp}.png"
         file_path = os.path.join(full_output_folder, file)
+        original_frame_count = len(images)
         Image.fromarray(tensor_to_bytes(images[0])).save(
             file_path,
             pnginfo=metadata,
             compress_level=4,
         )
         output_files.append(file_path)
+        #########################################################
+        # 프리뷰이미지 S3 업로드 시작
+        #########################################################
+        first_frame_data = images[0]  # S3 업로드를 위해 첫 번째 프레임 데이터 및 원본 프레임 수 저장
+        preview_asset = None # 비디오 업로드 시 사용할 asset 저장
+        if job_id is not None:
+            try:
+                # 프리뷰 이미지 S3 업로드 (CreationTime 포함)
+                upload_extra_pnginfo = extra_pnginfo.copy() if extra_pnginfo else {}
+                upload_extra_pnginfo["CreationTime"] = datetime.datetime.now().isoformat(" ")[:19]
+                
+                preview_asset = upload_image(
+                    image_data=first_frame_data,
+                    filename=f"{filename}_{timestamp}_preview.png",
+                    prompt=prompt,
+                    extra_pnginfo=upload_extra_pnginfo
+                )
+                # OutputAsset 생성
+                preview_outputAsset = create_output_asset_by_job_id(job_id, preview_asset.get("_id"), True, True)
+                logger.info(f"preview outputAsset: job:{job_id}, asset:{preview_outputAsset.get('id')}")
+                # PNG 파일 즉시 삭제
+                try:
+                    os.remove(file_path)
+                    output_files.remove(file_path)  # output_files에서도 제거
+                except OSError as delete_error:
+                    logger.error(f"프리뷰 PNG 파일 삭제 실패: {file_path}, 오류: {str(delete_error)}")
+            except Exception as e:
+                logger.error(f"프리뷰 이미지 S3 업로드 실패: {str(e)}")
 
         format_type, format_ext = format.split("/")
         if format_type == "image":
@@ -276,7 +296,7 @@ class VideoCombine:
                 exif = Image.Exif()
                 exif[ExifTags.IFD.Exif] = {36867: datetime.datetime.now().isoformat(" ")[:19]}
                 image_kwargs['exif'] = exif
-            file = f"{filename}_{counter:05}.{format_ext}"
+            file = f"{filename}_{timestamp}.{format_ext}"
             file_path = os.path.join(full_output_folder, file)
             if pingpong:
                 images = to_pingpong(images)
@@ -339,7 +359,7 @@ class VideoCombine:
                     i_pix_fmt = 'rgba'
                 else:
                     i_pix_fmt = 'rgb24'
-            file = f"{filename}_{counter:05}.{video_format['extension']}"
+            file = f"{filename}_{timestamp}.{video_format['extension']}"
             file_path = os.path.join(full_output_folder, file)
             bitrate_arg = []
             bitrate = video_format.get('bitrate')
@@ -358,7 +378,7 @@ class VideoCombine:
                 #Proceed to first yield
                 output_process.send(None)
                 if meta_batch is not None:
-                    meta_batch.outputs[unique_id] = (counter, output_process)
+                    meta_batch.outputs[unique_id] = (timestamp, output_process)
 
             for image in images:
                 output_process.send(image.tobytes())
@@ -382,7 +402,7 @@ class VideoCombine:
             output_files.append(file_path)
 
             if "gifski_pass" in video_format:
-                gif_output = f"{filename}_{counter:05}.gif"
+                gif_output = f"{filename}_{timestamp}.gif"
                 gif_output_path = os.path.join( full_output_folder, gif_output)
                 gifski_args = [gifski_path] + video_format["gifski_pass"] \
                         + ["-o", gif_output_path, file_path]
@@ -401,7 +421,7 @@ class VideoCombine:
 
             elif audio is not None and audio() is not False:
                 # Create audio file if input was provided
-                output_file_with_audio = f"{filename}_{counter:05}-audio.{video_format['extension']}"
+                output_file_with_audio = f"{filename}_{timestamp}-audio.{video_format['extension']}"
                 output_file_with_audio_path = os.path.join(full_output_folder, output_file_with_audio)
                 if "audio_pass" not in video_format:
                     logger.warn("Selected video format does not have explicit audio support")
@@ -428,6 +448,55 @@ class VideoCombine:
                 #Return this file with audio to the webui.
                 #It will be muted unless opened or saved with right click
                 file = output_file_with_audio
+                file_path = output_file_with_audio_path  # 오디오 처리된 최종 파일 경로로 업데이트
+
+            #########################################################
+            # 비디오 S3 업로드 시작
+            #########################################################
+            if job_id is not None:
+                try:
+                    # 비디오 메타데이터 계산
+                    video_width, video_height = map(int, dimensions.split('x'))
+
+                    # 프레임 개수 계산 (pingpong 등을 고려한 실제 프레임 수)
+                    if pingpong:
+                        # pingpong의 경우: 원본 + 역순(첫번째와 마지막 제외) = 2n-2
+                        total_frame_count = original_frame_count * 2 - 2
+                    else:
+                        total_frame_count = original_frame_count
+
+                    # 루프가 적용된 경우 duration 계산
+                    if loop_count > 0:
+                        video_duration = (total_frame_count * (loop_count + 1)) / frame_rate
+                    else:
+                        video_duration = total_frame_count / frame_rate
+
+                    video_extension = f".{video_format['extension']}"
+
+                    # 비디오 S3 업로드 (후처리 완료된 최종 파일)
+                    video_asset = upload_video(
+                        file_path=file_path,
+                        filename=filename,
+                        extension=video_extension,
+                        width=video_width,
+                        height=video_height,
+                        duration=video_duration,
+                        first_frame_asset=preview_asset
+                    )
+                    logger.info(f"video_asset: job:{job_id}, asset:{video_asset.get('id')}")
+
+                    # OutputAsset 생성
+                    video_outputAsset = create_output_asset_by_job_id(job_id, video_asset.get("_id"), False, True)
+                    logger.info(f"video_outputAsset: job:{job_id}, asset:{video_outputAsset.get('id')}")
+
+                    # 4. 로컬 비디오 파일 삭제
+                    try:
+                        os.remove(file_path)
+                        output_files.remove(file_path)
+                    except OSError as delete_error:
+                        logger.error(f"로컬 비디오 파일 삭제 실패: {file_path}, 오류: {str(delete_error)}")
+                except Exception as e:
+                    logger.warn(f"S3 업로드 실패: {str(e)}")
 
         previews = [
             {
