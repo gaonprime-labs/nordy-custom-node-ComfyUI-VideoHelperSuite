@@ -403,6 +403,7 @@ class VideoCombine:
         # 프리뷰이미지 S3 업로드 시작
         #########################################################
         preview_asset = None # 비디오 업로드 시 사용할 asset 저장
+        preview_asset_url = None
         if job_id is not None:
             try:
                 # 프리뷰 이미지 S3 업로드 (CreationTime 포함)
@@ -419,6 +420,7 @@ class VideoCombine:
                 preview_outputAsset = create_output_asset_by_job_id(job_id, preview_asset.get("_id"), True, True)
                 logger.info(f"preview outputAsset: job:{job_id}, asset:{preview_outputAsset.get('id')}")
                 # PNG 파일 즉시 삭제
+                preview_asset_url = f"{preview_asset.get('baseUrl')}/{preview_asset.get('prefixW200')}/{preview_asset.get('webpKey')}"
                 try:
                     os.remove(file_path)
                     output_files.remove(file_path)  # output_files에서도 제거
@@ -651,6 +653,7 @@ class VideoCombine:
         #########################################################
         # 비디오 S3 업로드 시작
         #########################################################
+        video_asset_url = None
         if job_id is not None:
             try:
                 # 비디오 메타데이터 계산
@@ -686,6 +689,7 @@ class VideoCombine:
                 # OutputAsset 생성
                 video_outputAsset = create_output_asset_by_job_id(job_id, video_asset.get("_id"), False, True)
                 logger.info(f"video_outputAsset: job:{job_id}, asset:{video_outputAsset.get('id')}")
+                video_asset_url = f"{video_asset.get('baseUrl')}/{video_asset.get('prefix')}/{video_asset.get('key')}"
 
                 # 4. 로컬 비디오 파일 삭제
                 try:
@@ -703,6 +707,9 @@ class VideoCombine:
                 "format": format,
                 "frame_rate": frame_rate,
                 "workflow": first_image_file,
+                "url": video_asset_url, #!nordy - apiOutput에서 필요해서 추가함. job.meta.apiOutputs.outputs.[n].url 로 사용할 수 있게 함
+                "video_asset_id": video_asset.get("_id"), #!nordy - apiOutput에서 필요해서 추가함. job.meta.apiOutputs.outputs.[n].videoAssetId 로 사용할 수 있게 함
+                "preview_url": preview_asset_url, #!nordy - apiOutput에서 필요해서 추가함. job.meta.apiOutputs.outputs.[n].previewUrl 로 사용할 수 있게 함
                 # "fullpath": output_files[-1],
             }
         if num_frames == 1 and 'png' in format and '%03d' in file:
