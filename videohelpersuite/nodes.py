@@ -641,32 +641,13 @@ class VideoCombine:
         
         nodry_s3_urls = []
         first_frame_asset = None
-        print(f"output_files: {output_files}")
+        # print(f"output_files: {output_files}")
         def is_image_extension(file_path: str) -> bool:
             return file_path.endswith('.png') or file_path.endswith('.jpg') or file_path.endswith('.jpeg') or file_path.endswith('.webp') or file_path.endswith('.gif')
         
         for index,file_path in enumerate(output_files):
             # print(f"file_path: {file_path}")
             with open(file_path, 'rb') as f:
-                # 이미지가 preview인지 확인
-                # if file_path.endswith('_preview.png'):
-                #     file_name = file_path.split('/')[-1]
-                #     img = Image.open(file_path)
-                #     preview_asset_result = nordy_upload_image_asset(
-                #         image_data=img,
-                #         filename=file_name,
-                #         prompt=prompt,
-                #         extra_pnginfo=extra_pnginfo,
-                #         job_id=job_id,
-                #         is_output_asset=True,
-                #         is_preview=True
-                #     )
-                #     preview_asset = preview_asset_result.get("asset")
-                #     first_frame_asset = preview_asset
-                #     preview_asset_url = f"{preview_asset.get('baseUrl')}/{preview_asset.get('prefixW200')}/{preview_asset.get('webpKey')}"
-                #     preview['preview_url'] = preview_asset_url
-                #     nodry_s3_urls.append(preview_asset_url)
-                #     continue
                 # 이미지인지 확인
                 if is_image_extension(file_path):
                     file_name = file_path.split('/')[-1]
@@ -682,11 +663,13 @@ class VideoCombine:
                     )
                     preview_asset = preview_asset_result.get("asset")
                     first_frame_asset = preview_asset
-                    preview_asset_url = f"{preview_asset.get('baseUrl')}/{preview_asset.get('prefix')}/{preview_asset.get('key')}"
-                    preview['fullpath'] = preview_asset_url
-                    nodry_s3_urls.append(preview_asset_url)
+                    result_asset_url = f"{preview_asset.get('baseUrl')}/{preview_asset.get('prefix')}/{preview_asset.get('key')}"
+                    preview['fullpath'] = result_asset_url
+                    nodry_s3_urls.append(result_asset_url)
                     if file_path.endswith('_preview.png'):
                         preview['preview_url'] = f"{preview_asset.get('baseUrl')}/{preview_asset.get('prefixW200')}/{preview_asset.get('webpKey')}"
+                    else:
+                        preview['url'] = result_asset_url
                 else:
                     video_width, video_height = dimensions
                     video_duration = 0
@@ -718,7 +701,7 @@ class VideoCombine:
                     preview['video_output_asset_id'] = video_outputAsset.get('_id')
             os.remove(file_path)
                     
-        print(f"nodry_s3_urls: {nodry_s3_urls}")
+        # print(f"nodry_s3_urls: {nodry_s3_urls}")
         
         return {"ui": {"gifs": [preview]}, "result": ((save_output, output_files, nodry_s3_urls),)}
 
