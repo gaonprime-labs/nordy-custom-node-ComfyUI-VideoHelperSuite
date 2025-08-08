@@ -17,7 +17,7 @@ import functools
 import folder_paths
 from .logger import logger
 from .image_latent_nodes import *
-from .load_video_nodes import LoadVideoUpload, LoadVideoPath, LoadVideoFFmpegUpload, LoadVideoFFmpegPath, LoadImagePath
+from .load_video_nodes import LoadVideoUpload, LoadVideoPath, LoadVideoFFmpegUpload, LoadVideoFFmpegPath, LoadImagePath, video_extensions
 from .load_images_nodes import LoadImagesFromDirectoryUpload, LoadImagesFromDirectoryPath
 from .batched_nodes import VAEEncodeBatched, VAEDecodeBatched
 from .utils import ffmpeg_path, get_audio, hash_path, validate_path, requeue_workflow, \
@@ -28,7 +28,7 @@ from comfy.utils import ProgressBar
 
 # S3 업로드를 위한 import 추가
 import time
-from util.image_utils import create_output_asset_by_job_id, upload_video, create_asset_with_image_upload
+from util.image_utils import create_output_asset_by_job_id, nordy_upload_image_asset, upload_video
 
 folder_paths.folder_names_and_paths["VHS_video_formats"] = (
     [
@@ -269,7 +269,7 @@ class VideoCombine:
                 "prompt": "PROMPT",
                 "extra_pnginfo": "EXTRA_PNGINFO",
                 "unique_id": "UNIQUE_ID",
-                "job_id": "JOB_ID",
+                "job_id": "JOB_ID"
             }),
         }
 
@@ -295,8 +295,8 @@ class VideoCombine:
         unique_id=None,
         manual_format_widgets=None,
         meta_batch=None,
-        job_id=None,
         vae=None,
+        job_id=None,
         **kwargs
     ):
         if latents is not None:
@@ -366,31 +366,29 @@ class VideoCombine:
         metadata.add_text("CreationTime", datetime.datetime.now().isoformat(" ")[:19])
 
         if meta_batch is not None and unique_id in meta_batch.outputs:
-            (timestamp, output_process) = meta_batch.outputs[unique_id]
+            (counter, output_process) = meta_batch.outputs[unique_id]
         else:
-            # # comfy counter workaround
-            # max_counter = 0
+            # comfy counter workaround
+            max_counter = 0
 
-            # # Loop through the existing files
-            # matcher = re.compile(f"{re.escape(filename)}_(\\d+)\\D*\\..+", re.IGNORECASE)
-            # for existing_file in os.listdir(full_output_folder):
-            #     # Check if the file matches the expected format
-            #     match = matcher.fullmatch(existing_file)
-            #     if match:
-            #         # Extract the numeric portion of the filename
-            #         file_counter = int(match.group(1))
-            #         # Update the maximum counter value if necessary
-            #         if file_counter > max_counter:
-            #             max_counter = file_counter
+            # Loop through the existing files
+            matcher = re.compile(f"{re.escape(filename)}_(\\d+)\\D*\\..+", re.IGNORECASE)
+            for existing_file in os.listdir(full_output_folder):
+                # Check if the file matches the expected format
+                match = matcher.fullmatch(existing_file)
+                if match:
+                    # Extract the numeric portion of the filename
+                    file_counter = int(match.group(1))
+                    # Update the maximum counter value if necessary
+                    if file_counter > max_counter:
+                        max_counter = file_counter
 
-            # # Increment the counter by 1 to get the next available value
-            # counter = max_counter + 1
-            #!nordy - 불필요한 카운터 로직 비활성화
-            timestamp = int(time.time())
+            # Increment the counter by 1 to get the next available value
+            counter = max_counter + 1
             output_process = None
 
         # save first frame as png to keep metadata
-        first_image_file = f"{filename}_{timestamp}.png"
+        first_image_file = f"{filename}_{job_id}_preview.png"
         file_path = os.path.join(full_output_folder, first_image_file)
         if extra_options.get('VHS_MetadataImage', True) != False:
             Image.fromarray(tensor_to_bytes(first_image)).save(
@@ -399,35 +397,6 @@ class VideoCombine:
                 compress_level=4,
             )
         output_files.append(file_path)
-        #########################################################
-        # 프리뷰이미지 S3 업로드 시작
-        #########################################################
-        preview_asset = None # 비디오 업로드 시 사용할 asset 저장
-        preview_asset_url = None
-        if job_id is not None:
-            try:
-                # 프리뷰 이미지 S3 업로드 (CreationTime 포함)
-                upload_extra_pnginfo = extra_pnginfo.copy() if extra_pnginfo else {}
-                upload_extra_pnginfo["CreationTime"] = datetime.datetime.now().isoformat(" ")[:19]
-                
-                preview_asset = create_asset_with_image_upload(
-                    image_data=first_image,
-                    filename=f"{filename}_{timestamp}_preview.png",
-                    prompt=prompt,
-                    extra_pnginfo=upload_extra_pnginfo
-                )
-                # OutputAsset 생성
-                preview_outputAsset = create_output_asset_by_job_id(job_id, preview_asset.get("_id"), True, True)
-                logger.info(f"preview outputAsset: job:{job_id}, asset:{preview_outputAsset.get('id')}")
-                # PNG 파일 즉시 삭제
-                preview_asset_url = f"{preview_asset.get('baseUrl')}/{preview_asset.get('prefixW200')}/{preview_asset.get('webpKey')}"
-                try:
-                    os.remove(file_path)
-                    output_files.remove(file_path)  # output_files에서도 제거
-                except OSError as delete_error:
-                    logger.error(f"프리뷰 PNG 파일 삭제 실패: {file_path}, 오류: {str(delete_error)}")
-            except Exception as e:
-                logger.error(f"프리뷰 이미지 S3 업로드 실패: {str(e)}")
 
         format_type, format_ext = format.split("/")
         if format_type == "image":
@@ -442,7 +411,7 @@ class VideoCombine:
                 exif[ExifTags.IFD.Exif] = {36867: datetime.datetime.now().isoformat(" ")[:19]}
                 image_kwargs['exif'] = exif
                 image_kwargs['lossless'] = kwargs.get("lossless", True)
-            file = f"{filename}_{timestamp}.{format_ext}"
+            file = f"{filename}_{job_id}.{format_ext}"
             file_path = os.path.join(full_output_folder, file)
             if pingpong:
                 images = to_pingpong(images)
@@ -493,14 +462,17 @@ class VideoCombine:
                 logger.warn("Output images were not of valid resolution and have had padding applied")
             else:
                 dimensions = (first_image.shape[1], first_image.shape[0])
-            if loop_count > 0:
-                loop_args = ["-vf", "loop=loop=" + str(loop_count)+":size=" + str(num_frames)]
-            else:
-                loop_args = []
             if pingpong:
                 if meta_batch is not None:
                     logger.error("pingpong is incompatible with batched output")
                 images = to_pingpong(images)
+                if num_frames > 2:
+                    num_frames += num_frames -2
+                    pbar.total = num_frames
+            if loop_count > 0:
+                loop_args = ["-vf", "loop=loop=" + str(loop_count)+":size=" + str(num_frames)]
+            else:
+                loop_args = []
             if video_format.get('input_color_depth', '8bit') == '16bit':
                 images = map(tensor_to_shorts, images)
                 if has_alpha:
@@ -513,7 +485,7 @@ class VideoCombine:
                     i_pix_fmt = 'rgba'
                 else:
                     i_pix_fmt = 'rgb24'
-            file = f"{filename}_{timestamp}.{video_format['extension']}"
+            file = f"{filename}_{job_id}.{video_format['extension']}"
             file_path = os.path.join(full_output_folder, file)
             bitrate_arg = []
             bitrate = video_format.get('bitrate')
@@ -565,6 +537,7 @@ class VideoCombine:
                 if 'gifski_pass' in video_format:
                     format = 'image/gif'
                     output_process = gifski_process(args, dimensions, video_format, file_path, env)
+                    audio = None
                 else:
                     args += video_format['main_pass'] + bitrate_arg
                     merge_filter_args(args)
@@ -572,7 +545,7 @@ class VideoCombine:
                 #Proceed to first yield
                 output_process.send(None)
                 if meta_batch is not None:
-                    meta_batch.outputs[unique_id] = (timestamp, output_process)
+                    meta_batch.outputs[unique_id] = (counter, output_process)
 
             for image in images:
                 pbar.update(1)
@@ -607,7 +580,7 @@ class VideoCombine:
                     pass
             if a_waveform is not None:
                 # Create audio file if input was provided
-                output_file_with_audio = f"{filename}_{timestamp}-audio.{video_format['extension']}"
+                output_file_with_audio = f"{filename}_{job_id}-audio.{video_format['extension']}"
                 output_file_with_audio_path = os.path.join(full_output_folder, output_file_with_audio)
                 if "audio_pass" not in video_format:
                     logger.warn("Selected video format does not have explicit audio support")
@@ -644,62 +617,10 @@ class VideoCombine:
                 #Return this file with audio to the webui.
                 #It will be muted unless opened or saved with right click
                 file = output_file_with_audio
-                file_path = output_file_with_audio_path
         if extra_options.get('VHS_KeepIntermediate', True) == False:
             for intermediate in output_files[1:-1]:
                 if os.path.exists(intermediate):
                     os.remove(intermediate)
-
-        #########################################################
-        # 비디오 S3 업로드 시작
-        #########################################################
-        video_asset_url = None
-        if job_id is not None:
-            try:
-                # 비디오 메타데이터 계산
-                video_width, video_height = dimensions
-
-                # 프레임 개수 계산 (pingpong 등을 고려한 실제 프레임 수)
-                if pingpong:
-                    # pingpong의 경우: 원본 + 역순(첫번째와 마지막 제외) = 2n-2
-                    total_frame_count = num_frames * 2 - 2
-                else:
-                    total_frame_count = num_frames
-
-                # 루프가 적용된 경우 duration 계산
-                if loop_count > 0:
-                    video_duration = (total_frame_count * (loop_count + 1)) / frame_rate
-                else:
-                    video_duration = total_frame_count / frame_rate
-
-                video_extension = f".{video_format['extension']}"
-
-                # 비디오 S3 업로드 (후처리 완료된 최종 파일)
-                video_asset = upload_video(
-                    file_path=file_path,
-                    filename=filename,
-                    extension=video_extension,
-                    width=video_width,
-                    height=video_height,
-                    duration=video_duration,
-                    first_frame_asset=preview_asset
-                )
-                logger.info(f"video_asset: job:{job_id}, asset:{video_asset.get('id')}")
-
-                # OutputAsset 생성
-                video_outputAsset = create_output_asset_by_job_id(job_id, video_asset.get("_id"), False, True)
-                logger.info(f"video_outputAsset: job:{job_id}, asset:{video_outputAsset.get('id')}")
-                video_asset_url = f"{video_asset.get('baseUrl')}/{video_asset.get('prefix')}/{video_asset.get('key')}"
-
-                # 4. 로컬 비디오 파일 삭제
-                try:
-                    os.remove(file_path)
-                    output_files.remove(file_path)
-                except OSError as delete_error:
-                    logger.error(f"로컬 비디오 파일 삭제 실패: {file_path}, 오류: {str(delete_error)}")
-            except Exception as e:
-                logger.warn(f"S3 업로드 실패: {str(e)}")
-
         preview = {
                 "filename": file,
                 "subfolder": subfolder,
@@ -707,15 +628,100 @@ class VideoCombine:
                 "format": format,
                 "frame_rate": frame_rate,
                 "workflow": first_image_file,
-                "url": video_asset_url, #!nordy - apiOutput에서 필요해서 추가함. job.meta.apiOutputs.outputs.[n].url 로 사용할 수 있게 함
-                "video_asset_id": video_asset.get("_id"), #!nordy - apiOutput에서 필요해서 추가함. job.meta.apiOutputs.outputs.[n].videoAssetId 로 사용할 수 있게 함
-                "preview_url": preview_asset_url, #!nordy - apiOutput에서 필요해서 추가함. job.meta.apiOutputs.outputs.[n].previewUrl 로 사용할 수 있게 함
-                # "fullpath": output_files[-1],
+                "fullpath": output_files[-1],
             }
+
+        # output_files내에 path도 replace하기 
         if num_frames == 1 and 'png' in format and '%03d' in file:
             preview['format'] = 'image/png'
             preview['filename'] = file.replace('%03d', '001')
-        return {"ui": {"gifs": [preview]}, "result": ((save_output, output_files),)}
+                
+        for index,file_path in enumerate(output_files):
+            output_files[index] = file_path.replace('%03d', '001')
+        
+        nodry_s3_urls = []
+        first_frame_asset = None
+        print(f"output_files: {output_files}")
+        def is_image_extension(file_path: str) -> bool:
+            return file_path.endswith('.png') or file_path.endswith('.jpg') or file_path.endswith('.jpeg') or file_path.endswith('.webp') or file_path.endswith('.gif')
+        
+        for index,file_path in enumerate(output_files):
+            # print(f"file_path: {file_path}")
+            with open(file_path, 'rb') as f:
+                # 이미지가 preview인지 확인
+                # if file_path.endswith('_preview.png'):
+                #     file_name = file_path.split('/')[-1]
+                #     img = Image.open(file_path)
+                #     preview_asset_result = nordy_upload_image_asset(
+                #         image_data=img,
+                #         filename=file_name,
+                #         prompt=prompt,
+                #         extra_pnginfo=extra_pnginfo,
+                #         job_id=job_id,
+                #         is_output_asset=True,
+                #         is_preview=True
+                #     )
+                #     preview_asset = preview_asset_result.get("asset")
+                #     first_frame_asset = preview_asset
+                #     preview_asset_url = f"{preview_asset.get('baseUrl')}/{preview_asset.get('prefixW200')}/{preview_asset.get('webpKey')}"
+                #     preview['preview_url'] = preview_asset_url
+                #     nodry_s3_urls.append(preview_asset_url)
+                #     continue
+                # 이미지인지 확인
+                if is_image_extension(file_path):
+                    file_name = file_path.split('/')[-1]
+                    img = Image.open(file_path)
+                    preview_asset_result = nordy_upload_image_asset(
+                        image_data=img,
+                        filename=file_name,
+                        prompt=prompt,
+                        extra_pnginfo=extra_pnginfo,
+                        job_id=job_id,
+                        is_output_asset=True,
+                        is_preview=True
+                    )
+                    preview_asset = preview_asset_result.get("asset")
+                    first_frame_asset = preview_asset
+                    preview_asset_url = f"{preview_asset.get('baseUrl')}/{preview_asset.get('prefix')}/{preview_asset.get('key')}"
+                    preview['fullpath'] = preview_asset_url
+                    nodry_s3_urls.append(preview_asset_url)
+                    if file_path.endswith('_preview.png'):
+                        preview['preview_url'] = f"{preview_asset.get('baseUrl')}/{preview_asset.get('prefixW200')}/{preview_asset.get('webpKey')}"
+                else:
+                    video_width, video_height = dimensions
+                    video_duration = 0
+                    if pingpong:
+                        total_frame_count = num_frames * 2 - 2
+                    else:
+                        total_frame_count = num_frames
+
+                    if loop_count > 0:
+                        video_duration = (total_frame_count * (loop_count + 1)) / frame_rate
+                    
+                    video_extension = f".{video_format['extension']}"
+                    
+                    video_asset = upload_video(
+                        file_path=file_path,
+                        filename=filename,
+                        extension=video_extension,
+                        width=video_width,
+                        height=video_height,
+                        duration=video_duration,
+                        first_frame_asset=first_frame_asset
+                    )
+                    video_outputAsset = create_output_asset_by_job_id(job_id, video_asset.get("_id"), False, True)
+                    video_asset_url = f"{video_asset.get('baseUrl')}/{video_asset.get('prefix')}/{video_asset.get('key')}"
+                    nodry_s3_urls.append(video_asset_url)
+                    preview['fullpath'] = video_asset_url
+                    preview['url'] = video_asset_url
+                    preview['video_asset_id'] = video_asset.get('_id')
+                    preview['video_output_asset_id'] = video_outputAsset.get('_id')
+            os.remove(file_path)
+                    
+        print(f"nodry_s3_urls: {nodry_s3_urls}")
+        
+        return {"ui": {"gifs": [preview]}, "result": ((save_output, output_files, nodry_s3_urls),)}
+
 
 class LoadAudio:
     @classmethod
@@ -1111,6 +1117,7 @@ class SelectLatest:
 
 NODE_CLASS_MAPPINGS = {
     "VHS_VideoCombine": VideoCombine,
+    # "VHS_VideoCombineNordy": VideoCombineNordy,
     "VHS_LoadVideo": LoadVideoUpload,
     "VHS_LoadVideoPath": LoadVideoPath,
     "VHS_LoadVideoFFmpeg": LoadVideoFFmpegUpload,
@@ -1155,6 +1162,7 @@ NODE_CLASS_MAPPINGS = {
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "VHS_VideoCombine": "Video Combine 🎥🅥🅗🅢",
+    "VHS_VideoCombineNordy": "Video Combine (Nordy) 🎥🅥🅗🅢",
     "VHS_LoadVideo": "Load Video (Upload) 🎥🅥🅗🅢",
     "VHS_LoadVideoPath": "Load Video (Path) 🎥🅥🅗🅢",
     "VHS_LoadVideoFFmpeg": "Load Video FFmpeg (Upload) 🎥🅥🅗🅢",
