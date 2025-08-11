@@ -659,7 +659,7 @@ class VideoCombine:
                         extra_pnginfo=extra_pnginfo,
                         job_id=job_id,
                         is_output_asset=True,
-                        is_preview=True
+                        is_preview=file_path.endswith('_preview.png')
                     )
                     preview_asset = preview_asset_result.get("asset")
                     first_frame_asset = preview_asset
