@@ -640,8 +640,6 @@ class VideoCombine:
             output_files[index] = file_path.replace('%03d', '001')
         
         nodry_s3_urls = []
-        first_frame_asset = None
-        # print(f"output_files: {output_files}")
         def is_image_extension(file_path: str) -> bool:
             return file_path.endswith('.png') or file_path.endswith('.jpg') or file_path.endswith('.jpeg') or file_path.endswith('.webp') or file_path.endswith('.gif')
         
@@ -662,22 +660,18 @@ class VideoCombine:
                         is_preview=False,
                     )
                     preview_asset = preview_asset_result.get("asset")
-                    first_frame_asset = preview_asset
                     result_asset_url = f"{preview_asset.get('baseUrl')}/{preview_asset.get('prefix')}/{preview_asset.get('key')}"
                     preview['fullpath'] = result_asset_url
                     nodry_s3_urls.append(result_asset_url)
-                    if file_path.endswith('_preview.png'):
-                        preview['preview_url'] = f"{preview_asset.get('baseUrl')}/{preview_asset.get('prefixW200')}/{preview_asset.get('webpKey')}"
-                    else:
-                        preview['url'] = result_asset_url
+                    preview['url'] = result_asset_url
                 else:
-                    video_width, video_height = dimensions
-                    video_duration = 0
                     if pingpong:
                         total_frame_count = num_frames * 2 - 2
                     else:
                         total_frame_count = num_frames
-
+                    # 기본 video duration 계산
+                    video_duration = total_frame_count / frame_rate
+                    # loop가 있으면 전체 duration 재계산
                     if loop_count > 0:
                         video_duration = (total_frame_count * (loop_count + 1)) / frame_rate
                     
@@ -687,21 +681,17 @@ class VideoCombine:
                         file_path=file_path,
                         filename=filename,
                         extension=video_extension,
-                        width=video_width,
-                        height=video_height,
                         duration=video_duration,
-                        first_frame_asset=first_frame_asset
                     )
                     video_outputAsset = create_output_asset_by_job_id(job_id, video_asset.get("_id"), False, True)
                     video_asset_url = f"{video_asset.get('baseUrl')}/{video_asset.get('prefix')}/{video_asset.get('key')}"
                     nodry_s3_urls.append(video_asset_url)
                     preview['fullpath'] = video_asset_url
+                    preview['preview_url'] = f"{video_asset.get('baseUrl')}/{video_asset.get('optimal')}/{video_asset.get('webpKey')}"
                     preview['url'] = video_asset_url
                     preview['video_asset_id'] = video_asset.get('_id')
                     preview['video_output_asset_id'] = video_outputAsset.get('_id')
             os.remove(file_path)
-                    
-        # print(f"nodry_s3_urls: {nodry_s3_urls}")
         
         return {"ui": {"gifs": [preview]}, "result": ((save_output, output_files, nodry_s3_urls),)}
 
