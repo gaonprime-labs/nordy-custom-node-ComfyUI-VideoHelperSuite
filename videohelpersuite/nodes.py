@@ -665,15 +665,15 @@ class VideoCombine:
                     nodry_s3_urls.append(result_asset_url)
                     preview['url'] = result_asset_url
                 else:
-                    if pingpong:
-                        total_frame_count = num_frames * 2 - 2
-                    else:
-                        total_frame_count = num_frames
+                    # if pingpong:
+                    #     total_frame_count = num_frames * 2 - 2
+                    # else:
+                    #     total_frame_count = num_frames
                     # 기본 video duration 계산
-                    video_duration = total_frame_count / frame_rate
+                    # video_duration = total_frame_count / frame_rate
                     # loop가 있으면 전체 duration 재계산
-                    if loop_count > 0:
-                        video_duration = (total_frame_count * (loop_count + 1)) / frame_rate
+                    # if loop_count > 0:
+                    #     video_duration = (total_frame_count * (loop_count + 1)) / frame_rate
                     
                     video_extension = f".{video_format['extension']}"
                     
@@ -681,15 +681,25 @@ class VideoCombine:
                         file_path=file_path,
                         filename=filename,
                         extension=video_extension,
-                        duration=video_duration,
+                        # duration=video_duration,
                     )
-                    video_outputAsset = create_output_asset_by_job_id(job_id, video_asset.get("_id"), False, True)
-                    video_asset_url = f"{video_asset.get('baseUrl')}/{video_asset.get('prefix')}/{video_asset.get('key')}"
+                    # Extract asset data once to avoid repeated get() calls
+                    asset = video_asset.get('asset')
+                    base_url = asset.get('baseUrl')
+                    prefix = asset.get('prefix')
+                    key = asset.get('key')
+                    optimal = asset.get('optimal')
+                    webp_key = asset.get('webpKey')
+                    asset_id = asset.get('_id')
+                    
+                    video_outputAsset = create_output_asset_by_job_id(job_id, asset_id, False, True)
+                    video_asset_url = f"{base_url}/{prefix}/{key}"
                     nodry_s3_urls.append(video_asset_url)
+                    
                     preview['fullpath'] = video_asset_url
-                    preview['preview_url'] = f"{video_asset.get('baseUrl')}/{video_asset.get('optimal')}/{video_asset.get('webpKey')}"
+                    preview['preview_url'] = f"{base_url}/{optimal}/{webp_key}"
                     preview['url'] = video_asset_url
-                    preview['video_asset_id'] = video_asset.get('_id')
+                    preview['video_asset_id'] = asset_id
                     preview['video_output_asset_id'] = video_outputAsset.get('_id')
             os.remove(file_path)
         
