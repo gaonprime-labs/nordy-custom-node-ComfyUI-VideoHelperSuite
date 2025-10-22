@@ -1194,18 +1194,26 @@ function addPreviewOptions(nodeType) {
           {
             content: "Open preview",
             callback: () => {
-              window.open(url, "_blank");
+              console.log("OPen Preivew ", url);
+              const urlObj = new URL(url);
+              const videoUrl = urlObj.searchParams.get("url");
+              console.log(videoUrl);
+              window.open(videoUrl, "_blank");
             },
           },
           {
             content: "Save preview",
             callback: () => {
-              const a = document.createElement("a");
-              a.href = url;
-              a.setAttribute("download", previewWidget.value.params.filename);
-              document.body.append(a);
-              a.click();
-              requestAnimationFrame(() => a.remove());
+              // const a = document.createElement("a");
+              // a.href = url;
+              // a.setAttribute("download", previewWidget.value.params.filename);
+              // document.body.append(a);
+              // a.click();
+              // requestAnimationFrame(() => a.remove());
+              const urlObj = new URL(url);
+              const videoUrl = urlObj.searchParams.get("url");
+              console.log(videoUrl);
+              window.open(videoUrl, "_blank");
             },
           }
         );
