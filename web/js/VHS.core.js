@@ -523,6 +523,8 @@ async function uploadFile(file) {
       assetKind: "Video",
     });
 
+    console.log(`resp :`, resp);
+
     return {
       ...resp,
       status: 200,
@@ -535,8 +537,9 @@ async function uploadFile(file) {
     }
   } catch (error) {
     // alert(error);
+    console.log(error);
     //!nordy - 413인지 확인 (Payload Too Large)
-    if (error.response.status === 413) {
+    if (error?.response?.status === 413) {
       alert(
         "File size exceeds the limit. Please select a smaller file. (max 40MB)"
       );
