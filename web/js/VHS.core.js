@@ -1223,8 +1223,12 @@ function addPreviewOptions(nodeType) {
               console.log("OPen Preivew ", url);
               const urlObj = new URL(url);
               const videoUrl = urlObj.searchParams.get("url");
-              console.log(videoUrl);
-              window.open(videoUrl, "_blank");
+              //!nordy - 콘솔 찍어보니 url.hre은 전체 s3 url을 리턴해서 사용함
+              const hrefUrl = urlObj.href;
+              const result = videoUrl || hrefUrl;
+              console.log(`videoUrl :`, videoUrl);
+              console.log(`hrefUrl :`, hrefUrl);
+              window.open(result, "_blank");
             },
           },
           {
@@ -1238,8 +1242,12 @@ function addPreviewOptions(nodeType) {
               // requestAnimationFrame(() => a.remove());
               const urlObj = new URL(url);
               const videoUrl = urlObj.searchParams.get("url");
-              console.log(videoUrl);
-              window.open(videoUrl, "_blank");
+              //!nordy - 콘솔 찍어보니 url.hre은 전체 s3 url을 리턴해서 사용함
+              const hrefUrl = urlObj.href;
+              const result = videoUrl || hrefUrl;
+              console.log(`videoUrl :`, videoUrl);
+              console.log(`hrefUrl :`, hrefUrl);
+              window.open(result, "_blank");
             },
           }
         );
