@@ -512,10 +512,21 @@ async function uploadFile(file) {
     if (i > 0) {
       body.append("subfolder", subfolder);
     }
-    const resp = await api.fetchApi("/upload/image", {
-      method: "POST",
-      body,
+    // const resp = await api.fetchApi("/upload/image", {
+    //   method: "POST",
+    //   body,
+    // });
+
+    //!nordy - nordyApi를 통해 inputAsset 업로드
+    const resp = await api.nordyApi.createInputAsset({
+      file: new_file,
+      assetKind: "Video",
     });
+
+    return {
+      ...resp,
+      status: 200,
+    };
 
     if (resp.status === 200) {
       return resp;
@@ -523,7 +534,15 @@ async function uploadFile(file) {
       alert(resp.status + " - " + resp.statusText);
     }
   } catch (error) {
-    alert(error);
+    // alert(error);
+    //!nordy - 413인지 확인 (Payload Too Large)
+    if (error.response.status === 413) {
+      alert(
+        "File size exceeds the limit. Please select a smaller file. (max 40MB)"
+      );
+    } else {
+      alert(error.response.data.message);
+    }
   }
 }
 function applyVHSAudioLinksFix(nodeType, nodeData, audio_slot) {
@@ -890,7 +909,7 @@ function addUploadWidget(nodeType, nodeData, widgetName, type = "video") {
               //upload failed and file can not be added to options
               return;
             }
-            const filename = (await resp.json()).name;
+            const filename = resp.rawUrl;
             pathWidget.options.values.push(filename);
             pathWidget.value = filename;
             if (pathWidget.callback) {
@@ -911,7 +930,7 @@ function addUploadWidget(nodeType, nodeData, widgetName, type = "video") {
               //upload failed and file can not be added to options
               return;
             }
-            const filename = (await resp.json()).name;
+            const filename = resp.rawUrl;
             pathWidget.options.values.push(filename);
             pathWidget.value = filename;
             if (pathWidget.callback) {
@@ -1087,6 +1106,7 @@ function addVideoPreview(nodeType, isInput = true) {
       Object.assign(params, this.value.params); //shallow copy
       params.timestamp = Date.now();
       this.parentEl.hidden = this.value.hidden;
+
       if (
         params.format?.split("/")[0] == "video" ||
         (advp && params.format?.split("/")[1] == "gif") ||
@@ -1094,7 +1114,8 @@ function addVideoPreview(nodeType, isInput = true) {
       ) {
         this.videoEl.autoplay = !this.value.paused && !this.value.hidden;
         if (!advp) {
-          this.videoEl.src = params.fullpath;
+          //!nordy - Video Combine에서는 fullpath, Load  Video에서는 filename에 s3 url을 리턴함. 이에대한 호환
+          this.videoEl.src = params?.fullpath || params.filename;
         } else {
           let target_width = (previewNode.size[0] - 20) * 2 || 256;
           let minWidth = app.ui.settings.getSettingValue(
@@ -1112,13 +1133,15 @@ function addVideoPreview(nodeType, isInput = true) {
           params.deadline = app.ui.settings.getSettingValue(
             "VHS.AdvancedPreviewsDeadline"
           );
-          this.videoEl.src = params.fullpath;
+          //!nordy - Video Combine에서는 fullpath, Load  Video에서는 filename에 s3 url을 리턴함. 이에대한 호환
+          this.videoEl.src = params?.fullpath || params.filename;
         }
         this.videoEl.hidden = false;
         this.imgEl.hidden = true;
       } else if (params.format?.split("/")[0] == "image") {
         //Is animated image
-        this.imgEl.src = params.fullpath;
+        //!nordy - Video Combine에서는 fullpath, Load  Video에서는 filename에 s3 url을 리턴함. 이에대한 호환
+        this.imgEl.src = params?.fullpath || params.filename;
         this.videoEl.hidden = true;
         this.imgEl.hidden = false;
       }

@@ -449,8 +449,12 @@ class LoadVideoUpload:
     FUNCTION = "load_video"
 
     def load_video(self, **kwargs):
-        kwargs['video'] = folder_paths.get_annotated_filepath(strip_path(kwargs['video']))
-        return load_video(**kwargs)
+        #!nordy - URL인 경우 그냥 처리
+        if kwargs['video'].startswith("https://"):
+            return load_video(**kwargs)
+        else:
+            kwargs['video'] = folder_paths.get_annotated_filepath(strip_path(kwargs['video']))
+            return load_video(**kwargs)
 
     @classmethod
     def IS_CHANGED(s, video, **kwargs):
@@ -459,6 +463,9 @@ class LoadVideoUpload:
 
     @classmethod
     def VALIDATE_INPUTS(s, video):
+        #!nordy - URL인 경우 유효한 것으로 인정
+        if video.startswith("https://"):
+            return True
         if not folder_paths.exists_annotated_filepath(video):
             return "Invalid video file: {}".format(video)
         return True
