@@ -572,55 +572,114 @@ class VideoCombine:
 
 
             a_waveform = None
+            logger.info(f"[debug] 오디오 처리 시작 - audio is None: {audio is None}, type: {type(audio) if audio else 'N/A'}")
+            
             if audio is not None:
                 try:
                     #safely check if audio produced by VHS_LoadVideo actually exists
                     a_waveform = audio['waveform']
-                except:
+                    logger.info(f"[debug] 오디오 waveform 추출 성공 - shape: {a_waveform.shape}, dtype: {a_waveform.dtype}")
+                    logger.info(f"[debug] 오디오 sample_rate: {audio.get('sample_rate', 'N/A')}")
+                except Exception as e:
+                    logger.error(f"[debug] 오디오 waveform 추출 실패: {e}")
                     pass
+            else:
+                logger.info("[debug] audio 매개변수가 None, 오디오 처리 건너뜀")
+            
+            if a_waveform is None:
+                logger.info("[debug] a_waveform이 None, 오디오 파일 생성하지 않음")
+            
             if a_waveform is not None:
+                logger.info("[debug] 오디오 믹싱 프로세스 시작")
                 # Create audio file if input was provided
                 output_file_with_audio = f"{filename}_{job_id}-audio.{video_format['extension']}"
                 output_file_with_audio_path = os.path.join(full_output_folder, output_file_with_audio)
+                logger.info(f"[debug] 오디오 포함 파일 경로: {output_file_with_audio_path}")
+                
                 if "audio_pass" not in video_format:
                     logger.warn("Selected video format does not have explicit audio support")
                     video_format["audio_pass"] = ["-c:a", "libopus"]
+                logger.info(f"[debug] audio_pass 설정: {video_format['audio_pass']}")
 
 
                 # FFmpeg command with audio re-encoding
                 #TODO: expose audio quality options if format widgets makes it in
                 #Reconsider forcing apad/shortest
                 channels = audio['waveform'].size(1)
+                logger.info(f"[debug] 오디오 채널 수: {channels}")
+                
+                # total_frames_output이 정의되어 있는지 확인
+                if 'total_frames_output' not in locals():
+                    logger.warn(f"[debug] total_frames_output 미정의, num_frames 사용: {num_frames}")
+                    total_frames_output = num_frames
+                
                 min_audio_dur = total_frames_output / frame_rate + 1
+                logger.info(f"[debug] 최소 오디오 길이: {min_audio_dur}초 (프레임: {total_frames_output}, fps: {frame_rate})")
+                
                 if video_format.get('trim_to_audio', 'False') != 'False':
                     apad = []
+                    logger.info("[debug] trim_to_audio 활성화, apad 없음")
                 else:
                     apad = ["-af", "apad=whole_dur="+str(min_audio_dur)]
+                    logger.info(f"[debug] apad 설정: {apad}")
+                
                 mux_args = [ffmpeg_path, "-v", "error", "-n", "-i", file_path,
                             "-ar", str(audio['sample_rate']), "-ac", str(channels),
                             "-f", "f32le", "-i", "-", "-c:v", "copy"] \
                             + video_format["audio_pass"] \
                             + apad + ["-shortest", output_file_with_audio_path]
+                
+                logger.info(f"[debug] FFmpeg 믹싱 명령어: {' '.join(mux_args)}")
 
                 audio_data = audio['waveform'].squeeze(0).transpose(0,1) \
                         .numpy().tobytes()
+                logger.info(f"[debug] 오디오 데이터 크기: {len(audio_data)} bytes")
+                
                 merge_filter_args(mux_args, '-af')
+                logger.info(f"[debug] merge_filter_args 후 최종 명령어: {' '.join(mux_args)}")
+                
                 try:
+                    logger.info("[debug] FFmpeg 오디오 믹싱 subprocess 시작...")
                     res = subprocess.run(mux_args, input=audio_data,
                                          env=env, capture_output=True, check=True)
+                    logger.info(f"[debug] FFmpeg 믹싱 성공, return code: {res.returncode}")
                 except subprocess.CalledProcessError as e:
+                    logger.error(f"[debug] FFmpeg 믹싱 실패, return code: {e.returncode}")
+                    logger.error(f"[debug] FFmpeg stderr: {e.stderr.decode(*ENCODE_ARGS)}")
                     raise Exception("An error occured in the ffmpeg subprocess:\n" \
                             + e.stderr.decode(*ENCODE_ARGS))
+                
                 if res.stderr:
+                    logger.info(f"[debug] FFmpeg stderr 출력: {res.stderr.decode(*ENCODE_ARGS)}")
                     print(res.stderr.decode(*ENCODE_ARGS), end="", file=sys.stderr)
+                
+                # 파일 생성 확인
+                if os.path.exists(output_file_with_audio_path):
+                    file_size = os.path.getsize(output_file_with_audio_path)
+                    logger.info(f"[debug] 오디오 파일 생성 성공: {output_file_with_audio_path} ({file_size} bytes)")
+                else:
+                    logger.error(f"[debug] 오디오 파일 생성 실패: {output_file_with_audio_path}")
+                
                 output_files.append(output_file_with_audio_path)
+                logger.info(f"[debug] output_files에 오디오 파일 추가됨, 총 {len(output_files)}개 파일")
                 #Return this file with audio to the webui.
                 #It will be muted unless opened or saved with right click
                 file = output_file_with_audio
+                logger.info(f"[debug] 최종 파일명 설정: {file}")
+            else:
+                logger.info("[debug] 오디오 파일 생성되지 않음 (a_waveform이 None)")
+        
+        logger.info(f"[debug] cleanup 전 output_files: {output_files}")
         if extra_options.get('VHS_KeepIntermediate', True) == False:
+            logger.info("[debug] VHS_KeepIntermediate=False, 중간 파일 삭제 중...")
             for intermediate in output_files[1:-1]:
                 if os.path.exists(intermediate):
                     os.remove(intermediate)
+                    logger.info(f"[debug] 중간 파일 삭제됨: {intermediate}")
+        
+        logger.info(f"[debug] cleanup 후 output_files: {output_files}")
+        logger.info(f"[debug] 최종 file 변수 값: {file}")
+        
         preview = {
                 "filename": file,
                 "subfolder": subfolder,
@@ -630,14 +689,17 @@ class VideoCombine:
                 "workflow": first_image_file,
                 "fullpath": output_files[-1],
             }
+        logger.info(f"[debug] preview 생성됨: {preview}")
 
         # output_files내에 path도 replace하기 
         if num_frames == 1 and 'png' in format and '%03d' in file:
             preview['format'] = 'image/png'
             preview['filename'] = file.replace('%03d', '001')
+            logger.info(f"[debug] 단일 프레임 PNG 처리: {preview['filename']}")
                 
         for index,file_path in enumerate(output_files):
             output_files[index] = file_path.replace('%03d', '001')
+        logger.info(f"[debug] %03d 치환 후 output_files: {output_files}")
         
         nodry_s3_urls = []
         def is_image_extension(file_path: str) -> bool:
