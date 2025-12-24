@@ -643,7 +643,31 @@ class VideoCombine:
         def is_image_extension(file_path: str) -> bool:
             return file_path.endswith('.png') or file_path.endswith('.jpg') or file_path.endswith('.jpeg') or file_path.endswith('.webp') or file_path.endswith('.gif')
         
-        for index,file_path in enumerate(output_files):
+        # audio 유무에 따라 업로드할 파일 선택
+        files_to_upload = []
+        has_audio_file = any('-audio.' in fp for fp in output_files)
+        logger.info(f"[debug] 오디오 파일 존재: {has_audio_file}, 출력 파일들: {output_files}")
+        
+        for file_path in output_files:
+            # preview 이미지는 항상 업로드
+            if is_image_extension(file_path):
+                files_to_upload.append(file_path)
+            # audio 파일이 있으면 -audio.mp4만, 없으면 일반 video만
+            elif has_audio_file:
+                if '-audio.' in file_path:
+                    files_to_upload.append(file_path)
+                    logger.info(f"[debug] 오디오 파일 업로드 선택됨: {file_path}")
+                else:
+                    logger.info(f"[debug] 오디오 없는 비디오 파일 제외됨: {file_path}")
+            else:
+                # audio 파일이 없으면 일반 video 파일 업로드
+                if '-audio.' not in file_path:
+                    files_to_upload.append(file_path)
+                    logger.info(f"[debug] 일반 비디오 파일 업로드 선택됨: {file_path}")
+        
+        logger.info(f"[debug] 업로드할 파일 목록: {files_to_upload}")
+        
+        for index,file_path in enumerate(files_to_upload):
             # print(f"file_path: {file_path}")
             with open(file_path, 'rb') as f:
                 # 이미지인지 확인
@@ -702,6 +726,13 @@ class VideoCombine:
                     preview['video_asset_id'] = asset_id
                     preview['video_output_asset_id'] = video_outputAsset.get('_id')
             os.remove(file_path)
+            logger.info(f"[debug] 업로드된 파일 삭제 완료: {file_path}")
+        
+        # 업로드되지 않은 파일들도 삭제
+        for file_path in output_files:
+            if file_path not in files_to_upload and os.path.exists(file_path):
+                os.remove(file_path)
+                logger.info(f"[debug] 업로드되지 않은 파일 삭제 완료: {file_path}")
         
         return {"ui": {"gifs": [preview]}, "result": ((save_output, output_files, nodry_s3_urls),)}
 
