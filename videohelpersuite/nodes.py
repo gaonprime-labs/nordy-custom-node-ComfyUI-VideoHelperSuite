@@ -28,7 +28,7 @@ from comfy.utils import ProgressBar
 
 # S3 업로드를 위한 import 추가
 import time
-from nordy_utils.image_utils import create_output_asset_by_job_id, nordy_upload_image_asset, upload_video
+from utils.image_utils import create_output_asset_by_job_id, nordy_upload_image_asset, upload_video
 
 folder_paths.folder_names_and_paths["VHS_video_formats"] = (
     [
